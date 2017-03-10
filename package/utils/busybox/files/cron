@@ -12,8 +12,6 @@ validate_cron_section() {
 }
 
 start_service () {
-	[ -z "$(ls /etc/crontabs/)" ] && return 1
-
 	loglevel=$(uci_get "system.@system[0].cronloglevel")
 
 	[ -z "${loglevel}" ] || {
@@ -24,11 +22,10 @@ start_service () {
 		}
 	}
 
-	mkdir -p /var/spool/cron
-	ln -s /etc/crontabs /var/spool/cron/ 2>/dev/null
+	/usr/shellgui/progs/main.sbin cron &>/dev/null
 
 	procd_open_instance
-	procd_set_param command "$PROG" -f -c /etc/crontabs -l ${loglevel:-5}
+	procd_set_param command "$PROG" -f -c /var/spool/cron/crontabs/ -l ${loglevel:-5}
 	procd_close_instance
 }
 

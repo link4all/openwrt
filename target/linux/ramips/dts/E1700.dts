@@ -17,6 +17,11 @@
 	model = "Linksys E1700";
 
 	palmbus@10000000 {
+
+	gpio3:gpio@688 {
+			status = "okay";
+		};
+
 		spi@b00 {
 			status = "okay";
 
@@ -57,7 +62,7 @@
 	pinctrl {
 		state_default: pinctrl0 {
 			gpio {
-				ralink,group = "i2c", "uartf";
+				ralink,group = "i2c", "uartf","wled";
 				ralink,function = "gpio";
 			};
 		};
@@ -66,42 +71,33 @@
 	ethernet@10100000 {
 		status = "okay";
 
-		mtd-mac-address = <&factory 0x28>;
-
 		pinctrl-names = "default";
 		pinctrl-0 = <&rgmii1_pins &rgmii2_pins &mdio_pins>;
 
+		ralink,port-map = "llllw";
+
+		port@4 {
+			status = "okay";
+			phy-mode = "rgmii";
+			phy-handle = <&phy4>;
+		};
+
 		port@5 {
 			status = "okay";
-			ralink,fixed-link = <1000 1 1 1>;
 			phy-mode = "rgmii";
+			phy-handle = <&phy5>;
 		};
 
 		mdio-bus {
 			status = "okay";
 
-			phy0: ethernet-phy@0 {
-				reg = <0>;
-				phy-mode = "rgmii";
-			};
-			phy1: ethernet-phy@1 {
-				reg = <1>;
-				phy-mode = "rgmii";
-			};
-			phy2: ethernet-phy@2 {
-				reg = <2>;
-				phy-mode = "rgmii";
-			};
-			phy3: ethernet-phy@3 {
-				reg = <3>;
-				phy-mode = "rgmii";
-			};
 			phy4: ethernet-phy@4 {
 				reg = <4>;
 				phy-mode = "rgmii";
 			};
-			phy1f: ethernet-phy@1f {
-				reg = <0x1f>;
+
+			phy5: ethernet-phy@5 {
+				reg = <5>;
 				phy-mode = "rgmii";
 			};
 		};
@@ -109,11 +105,14 @@
 
 	gsw@10110000 {
 		ralink,port4 = "gmac";
-		mediatek,mt7530 = <1>;
+
 	};
 
 	wmac@10180000 {
 		ralink,mtd-eeprom = <&factory 0>;
+	};
+	pcie@10140000 {
+		status = "okay";
 	};
 
 	gpio-keys-polled {
@@ -142,6 +141,10 @@
 		wan {
 			label = "linksys:green:wps";
 			gpios = <&gpio0 12 1>;
+		};
+		wifi {
+			label = "linksys:green:wifi";
+			gpios = <&gpio3 0 1>;
 		};
 	};
 };

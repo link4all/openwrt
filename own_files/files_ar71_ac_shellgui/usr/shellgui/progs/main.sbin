@@ -1,0 +1,1118 @@
+#!/bin/sh
+
+www_root() {
+shellgui '{"action": "print_www_root"}' | jshon -e "www_root" -u
+}
+wan_conn()
+{
+killall ubus >/dev/null 2>&1
+/bin/busybox start-stop-daemon -S -b -x ubus listen >/dev/null 2>&1
+ubus call network.interface.${1} up >/dev/null 2>&1
+killall ubus >/dev/null 2>&1
+}
+wan_disconn()
+{
+killall ubus >/dev/null 2>&1
+/bin/busybox start-stop-daemon -S -b -x ubus listen >/dev/null 2>&1
+ubus call network.interface.${1} down >/dev/null 2>&1
+killall ubus >/dev/null 2>&1
+}
+case $1 in
+http_download)
+ls /proc/$$/fd/0 -l | awk '{printf $NF}' | grep -q "^pipe:"
+[ $ret -ne 0 ] && echo "not input content" && exit
+filename=$2
+printf "Content-Type:application/x-download\r\nContent-Disposition: attachment; filename=$filename\r\n\r\n"
+cat /proc/$$/fd/0
+;;
+restart_qos)
+/usr/shellgui/progs/bwmond stop &>/dev/null
+/usr/shellgui/progs/qos_shellgui stop &>/dev/null
+case $2 in
+all)
+[ -d /usr/data/bwmon/ ] && rm -rf /usr/data/bwmon/qos-upload-* /usr/data/bwmon/qos-download-* &>/dev/null
+[ -d /tmp/data/bwmon/ ] && rm -rf /tmp/data/bwmon/qos-upload-* /tmp/data/bwmon/qos-download-* &>/dev/null
+;;
+upload)
+[ -d /usr/data/bwmon/ ] && rm -rf /usr/data/bwmon/qos-upload-* &>/dev/null
+[ -d /tmp/data/bwmon/ ] && rm -rf /tmp/data/bwmon/qos-upload-* &>/dev/null
+;;
+download)
+[ -d /usr/data/bwmon/ ] && rm -rf /usr/data/bwmon/qos-download-* &>/dev/null
+[ -d /tmp/data/bwmon/ ] && rm -rf /tmp/data/bwmon/qos-download-* &>/dev/null
+;;
+esac
+/etc/init.d/firewall restart &>/dev/null
+;;
+wan_conn)
+wan_conn $2
+;;
+wan_reconn)
+wan_disconn $2
+wan_conn $2
+;;
+wan_disconn)
+wan_disconn $2
+;;
+lang_print_Js|l_p_J)
+arg="$2";app="$3";lang="$4";
+jshon -e "${lang}" < /usr/shellgui/shellguilighttpd/www/apps/${app}/i18n.json | grep -E "$arg" | sed -e 's#\,$##g' -e 's#^[ ]*"'"$arg"'#UI.#g' -e 's#": "#="#g' -e 's#$#;#g'
+;;
+edit_ap_set)
+ls /proc/$$/fd/0 -l | awk '{printf $NF}' | grep -q "^pipe:"
+[ $? -eq 0 ] && content=$(cat /proc/$$/fd/0)
+
+ssid=$(echo "$content" | jshon -e "ssid" -u)
+ip=$(echo "$content" | jshon -e "ip" -u)
+mac=$(echo "$content" | jshon -e "mac" -u)
+enc=$(echo "$content" | jshon -e "enc" -u)
+key=$(echo "$content" | jshon -e "key" -u)
+
+bak_ap_ifname=$(uci get network.wan.bak_ap_ifname)
+if [ -z "$bak_ap_ifname" ]; then
+old_dev=$(uci get network.wan.ifname)
+uci set network.wan.bak_ap_ifname="${old_dev}"
+uci commit network
+bak_ap_ifname=$(uci get network.wan.bak_ap_ifname)
+fi
+
+uci set network.wan.ifname="br-aplan"
+uci set network.aplan=
+uci set network.aplan=interface
+uci set network.aplan.type='bridge'
+uci set network.aplan.ifname="$bak_ap_ifname"
+uci commit network
+
+uci set wireless.@wifi-iface[0].network='aplan'
+uci set wireless.@wifi-iface[0].ssid="${ssid}"
+uci set wireless.@wifi-iface[0].encryption="${enc}"
+uci set wireless.@wifi-iface[0].key="${key}"
+uci commit wireless
+
+cat <<EOF > /usr/shellgui/shellguilighttpd/www/apps/wire-ap/apip.txt
+apip="${ip}"
+EOF
+;;
+setssid_ap)
+ls /proc/$$/fd/0 -l | awk '{printf $NF}' | grep -q "^pipe:"
+[ $? -eq 0 ] && content=$(cat /proc/$$/fd/0)
+echo "$content" >/tmp/2
+ssid_24g=$(echo "$content" | jshon -e "ssid_24g" -u)
+ssid_58g=$(echo "$content" | jshon -e "ssid_58g" -u)
+enc=$(echo "$content" | jshon -e "enc" -u)
+key=$(echo "$content" | jshon -e "key" -u)
+wireless_str=$(uci show -X wireless)
+nics=$(echo "$wireless_str" | grep '\.hwmode=' | cut -d '.' -f2)
+for nic in $nics;do
+if echo "$wireless_str" | grep 'wireless\.'"${nic}"'\.hwmode=' | cut -d '=' -f2 | grep -q 'g'; then
+cfg=$(echo "$wireless_str" | grep -E "wireless\.[a-z0-9]*\.device=[\"|\']${nic}[\"|\']$" | cut -d '.' -f2)
+	if [ -n "${cfg}" ]; then
+		uci set wireless.${cfg}.ssid="${ssid_24g}"
+		uci set wireless.${cfg}.encryption="${enc}"
+		uci set wireless.${cfg}.key="${key}"
+		break
+	fi
+fi
+done
+for nic in $nics;do
+if echo "$wireless_str" | grep 'wireless\.'"${nic}"'\.hwmode=' | cut -d '=' -f2 | grep -q 'a'; then
+cfg=$(echo "$wireless_str" | grep -E "wireless\.[a-z0-9]*\.device=[\"|\']${nic}[\"|\']$" | cut -d '.' -f2)
+	if [ -n "${cfg}" ]; then
+		uci set wireless.${cfg}.ssid="${ssid_58g}"
+		uci set wireless.${cfg}.encryption="${enc}"
+		uci set wireless.${cfg}.key="${key}"
+		break
+	fi
+fi
+done
+uci commit wireless
+;;
+disable_ap_set)
+bak_ap_ifname=$(uci get network.wan.bak_ap_ifname)
+if [ -z "$bak_ap_ifname" ]; then
+old_dev=$(uci get network.wan.ifname)
+uci set network.wan.bak_ap_ifname="${old_dev}"
+uci commit network
+bak_ap_ifname=$(uci get network.wan.bak_ap_ifname)
+fi
+
+uci set network.wan.ifname="${bak_ap_ifname}"
+uci set network.aplan=
+uci commit network
+
+uci set wireless.@wifi-iface[0].network='lan'
+uci commit wireless
+;;
+kick_out_clients)
+ls /proc/$$/fd/0 -l | awk '{printf $NF}' | grep -q "^pipe:"
+[ $? -eq 0 ] && content=$(cat /proc/$$/fd/0)
+ifname="wlan"$(uci get wireless.@wifi-iface[0].device| grep -Eo '[0-9]*$')
+ban_time=$(echo "${content}" | jshon -e "time" -u)
+for mac in $(echo "${content}" | jshon -e "macs" -a -u); do
+ubus call hostapd.${ifname} del_client '{ "addr" : "'"${mac}"'", "reason" : "assoc toomany" ,"deauth": True, "ban_time": '${ban_time}'}' &>/dev/null
+done
+;;
+get_ap_clients)
+printf '{'
+iw $2 station dump | awk 'BEGIN{ORS=""} 
+/^Station/ { printf "\""$2"\":{" }; 
+/signal:/ {printf "\"signal\":"$2","}; 
+/signal.*avg:/ {printf "\"signal_avg\":"$3","}; 
+/tx.*bitrate:/ {print "\"tx_bitrate\":"$3","};  
+/rx.*bitrate:/ {print "\"rx_bitrate\":"$3"},"};' | sed 's/,$//'
+echo '}'
+;;
+login_ap)
+COOKIES_AC_AP_FILE="/tmp/ac_ap.cookie"
+ls /proc/$$/fd/0 -l | awk '{printf $NF}' | grep -q "^pipe:"
+[ $? -eq 0 ] && content=$(cat /proc/$$/fd/0)
+# username=$(echo "$input_str" | jshon -e "username" -u 2>/dev/null)
+# passwd=$(echo "$input_str" | jshon -e "passwd" -u 2>/dev/null)
+ip=$(echo "$content" | jshon -e "ip" -u 2>/dev/null)
+port=$(echo "$content" | jshon -e "port" 2>/dev/null)
+[ -z "$port" ] && port=64010
+post_data=$(echo "$content" | jshon -d "ip" -d "port" -s "make_sysauth" -i "action" -j)
+(wget -q -T 3 -t 1 --header="Content-Type: application/json" --post-data="$post_data" --load-cookies=${COOKIES_AC_AP_FILE} --save-cookies=${COOKIES_AC_AP_FILE} --keep-session-cookies "http://${ip}:${port}/" -O /dev/null)
+
+exit
+;;
+sent_backup)
+files=$(ls /tmp/shellgui_bak-*.7z)
+if [ -n "${files}" ]; then
+eval $(grep '^MY_EMAIL' /usr/shellgui/shellguilighttpd/www/apps/notice/email/email.conf | tr -d ' ')
+for file in $files; do
+size=$(ls -l ${file} | awk '{printf $5}')
+echo '{"bak_file": "'"${file}"'","size": "'"${size}"'"}' | email \
+-a ${file} \
+$(grep -vE '^#|--[b]cc ' /usr/shellgui/shellguilighttpd/www/apps/notice/email/email_extra.conf | tr '\n' ' ') \
+"${MY_EMAIL}"
+[ $? -eq 0 ] && rm -f ${file}
+done
+fi
+if [ -n "$2" ]; then
+	root_pct=$(df | grep -E ' /$' | sed -n 1p | sed -r 's/.* ([0-9]*)%.*/\1/g')
+	[ ${root_pct} -lt 80 ] && exit
+fi
+DATE=$(date +%Y-%m-%d-%H)
+mkdir /tmp/shellgui_bak-${DATE}
+cd /usr/shellgui/shellguilighttpd/www/apps
+for app in $(find -type d -maxdepth 1 -mindepth 1 | sed 's#\.\/##g'); do
+config_str=$(jshon -e "keep_files" -Q < ${app}/config.json)
+files=$(echo "$config_str" | jshon -l)
+if [ ${files} -gt 0 ]; then
+	for file in $(seq 0 $(expr ${files} - 1)); do
+		file_name=$(echo "$config_str" | jshon -e ${file} -e "file" -u)
+		file_regen=$(echo "$config_str" | jshon -e ${file} -e "regen" -u 2>/dev/null)
+		if echo "${file_name}" | grep -qE '\.db$|\.json$'; then
+			mv ${file_name} /tmp/shellgui_bak-${DATE}
+			${file_regen}
+		fi
+	done
+fi
+done
+# /tmp/pre_sent
+mac=$(shellgui '{"action": "get_ifce", "dev": "eth0"}' | jshon -e "mac" -u)
+cd /tmp
+7za a /tmp/shellgui_bak-${DATE}.7z /tmp/shellgui_bak-${DATE} -p${mac}
+rm -rf /tmp/shellgui_bak-${DATE}
+
+[ -z "${MY_EMAIL}" ] && eval $(grep '^MY_EMAIL' /usr/shellgui/shellguilighttpd/www/apps/notice/email/email.conf | tr -d ' ')
+[ -z "${MY_EMAIL}" ] && exit
+echo '{"bak_file": "/tmp/shellgui_bak-'"${DATE}"'.7z","size": ""}' | email \
+-a /tmp/shellgui_bak-${DATE}.7z \
+$(grep -vE '^#|--[b]cc ' /usr/shellgui/shellguilighttpd/www/apps/notice/email/email_extra.conf | tr '\n' ' ') \
+"${MY_EMAIL}"
+[ $? -eq 0 ] && rm -f /tmp/shellgui_bak-${DATE}.7z
+;;
+regex_str)
+ls /proc/$$/fd/0 -l | awk '{printf $NF}' | grep -q "^pipe:"
+[ $? -eq 0 ] && input_str=$(cat /proc/$$/fd/0)
+case $2 in
+islang_en)
+if [ $(expr length "$(echo "$input_str" | sed 's/[a-zA-Z]//g')") -eq 0 ]; then
+	exit 0
+else
+	exit 1
+fi
+;;
+islang_cn)
+t_len=$(expr length "$input_str")
+cn_len=$(expr length "$(echo "$input_str" | awk '{for (i=1; i<=NF; i++) if ($i >= "\344" && $i <= "\351") {printf "%s", $i$(i+1)$(i+2); i+=2}}' FS="")")
+if [ $t_len -eq $cn_len ]; then
+	exit 0
+else
+	exit 1
+fi
+;;
+islang_alb)
+if [ $(expr length "$(echo "$input_str" | sed 's/[0-9]//g')") -eq 0 ]; then
+	exit 0
+else
+	exit 1
+fi
+;;
+islang_enalb)
+if [ $(expr length "$(echo "$input_str" | sed 's/[a-zA-Z0-9]//g')") -eq 0 ]; then
+	exit 0
+else
+	exit 1
+fi
+;;
+isip_ipv4)
+shellgui '{"action": "check_ip", "ip": "'"$input_str"'"}' &>/dev/null
+;;
+isip_ipv6)
+regex='(([0-9a-fA-F]{1,4}:){7,7}[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,7}:|([0-9a-fA-F]{1,4}:){1,6}:[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,5}(:[0-9a-fA-F]{1,4}){1,2}|([0-9a-fA-F]{1,4}:){1,4}(:[0-9a-fA-F]{1,4}){1,3}|([0-9a-fA-F]{1,4}:){1,3}(:[0-9a-fA-F]{1,4}){1,4}|([0-9a-fA-F]{1,4}:){1,2}(:[0-9a-fA-F]{1,4}){1,5}|[0-9a-fA-F]{1,4}:((:[0-9a-fA-F]{1,4}){1,6})|:((:[0-9a-fA-F]{1,4}){1,7}|:)|fe80:(:[0-9a-fA-F]{0,4}){0,4}%[0-9a-zA-Z]{1,}|::(ffff(:0{1,4}){0,1}:){0,1}((25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])\.){3,3}(25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])|([0-9a-fA-F]{1,4}:){1,4}:((25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])\.){3,3}(25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9]))'
+
+if [ "$input_str" = "$(echo "$input_str" | grep -Eo "$regex")" ]; then
+	exit 0
+else
+	exit 1
+fi
+;;
+isurl)
+regex='(https?|ftp|file)://[-A-Za-z0-9\+&@#/%?=~_|!:,.;]*[-A-Za-z0-9\+&@#/%=~_|]'
+if [ "$input_str" = "$(echo "$input_str" | grep -Eo "$regex")" ]; then
+	exit 0
+else
+	exit 1
+fi
+;;
+isdomain)
+regex='[a-zA-Z0-9.-]+\.[a-zA-Z0-9.-]+'
+if [ "$input_str" = "$(echo "$input_str" | grep -Eo "$regex")" ]; then
+	exit 0
+else
+	exit 1
+fi
+;;
+isemail)
+regex='[a-zA-Z0-9.-]+\@[a-zA-Z0-9.-]+\.[a-zA-Z0-9.-]+'
+if [ "$input_str" = "$(echo "$input_str" | grep -Eo "$regex")" ]; then
+	exit 0
+else
+	exit 1
+fi
+;;
+ismac)
+shellgui '{"action": "check_mac", "mac": "'"$input_str"'"}' &>/dev/null
+;;
+ispath)
+regex='^(((/)?[[[:alnum:]]|\.]*)*)'
+[ "$input_str" = "/" ] && exit 0
+if [ "$input_str" = "$(echo "$input_str" | grep -Eo "$regex")" ]; then
+	exit 0
+else
+	exit 1
+fi
+;;
+esac
+;;
+send_mail)
+# echo "邮件 内容 content" | /usr/shellgui/progs/main.sbin  send_mail '{"subject": "邮件标题", "to": "fj_17@sina.com", "attach": ["/usr/shellgui/net_record.db","/usr/shellgui/notice.db"]}'
+ls /proc/$$/fd/0 -l | awk '{printf $NF}' | grep -q "^pipe:"
+[ $? -eq 0 ] && content=$(cat /proc/$$/fd/0)
+# input_str=$(echo "$@" | sed 's/^send_mail //')
+subject=$(echo "$content" | jshon -e "subject" -u)
+to=$(echo "$content" | jshon -e "to" -u)
+attach_str=$(echo "$content" | jshon -e "attach" -j 2>/dev/null)
+if [ -n "$attach_str" ]; then
+for key in $(seq 0 $(expr $(echo "$attach_str" | jshon -l) - 1)); do
+attach_args="$attach_args -a "$(echo "$attach_str" | jshon -e ${key} -u)
+done
+fi
+# echo "$attach_args"
+extra_args=$(cat $(www_root)/apps/notice/email/email_extra.conf | sed '/^$/d' | tr '\n' ' ')
+
+echo "$content" | email -c $(www_root)/apps/notice/email/email.conf \
+$extra_args $attach_args -s "$subject" "$to"
+;;
+wifi_scan)
+iwlist ${2} scanning | awk '
+BEGIN {
+  count = 0;
+  BSSID = "N/A";
+  CHANNEL = "N/A";
+  SSID = "N/A";
+  SIG = "N/A";
+  ENC = "N/A";
+  W2 = "N/A";
+  W1 = "N/A";
+  WPA = 0;
+  WPA2 = 0;
+  printf("[");
+}
+function record(bs, ch, s, sg, e, w2, w1){
+  id = "";
+  bssid = "";
+  c = "";
+  sig = "";
+  sig_result = "";
+  enc = "";
+  type = "none";
+  split(bs,a,": ");
+  bssid = a[2];
+  split(ch,cc,":");
+  c = cc[2];
+  split(s,a,":");
+  id = a[2];
+  split(sg,a,"level=");
+  split(a[2],s," ");
+  sig = s[1];
+
+  if(sig <= -100) {
+	sig_result = 0;
+  } else if (sig >= -50) {
+	sig_result = 100;
+  } else {
+	sig_result = 2 * (sig + 100);
+  }
+
+  split(e,a,":");
+  enc = a[2];
+  if (enc == "on"){
+	type = "WEP";
+	ccmp = 0;
+	tkip = 0;
+	psk2 = 0;
+	psk1 = 0;
+	split(w2,a,":");
+	if(a[2]){
+	  split(a[2], r, " ");
+	  if(r[1] == "CCMP")
+		ccmp = 1;
+	  if(r[1] == "TKIP")
+		tkip = 1;
+	  if(r[2] == "CCMP")
+		ccmp = 1;
+	  if(r[2] == "TKIP")
+		tkip = 1;
+	  psk2 = a[2];
+	}
+	split(w1,a,":");
+	if(a[2]){
+	  split(a[2], r, " ");
+	  if(r[1] == "CCMP")
+		ccmp = 1;
+	  if(r[1] == "TKIP")
+		tkip = 1;
+	  if(r[2] == "CCMP")
+		ccmp = 1;
+	  if(r[2] == "TKIP")
+		tkip = 1;
+	  psk1 = a[2];
+	}
+	if (psk1 != 0 && psk2 != 0){
+	  type = "mixed-psk";
+	  if(tkip)
+		type =(type"+tkip");
+	  if(ccmp)
+		type =(type"+ccmp");
+	}else if(psk1 == 0 && psk2 != 0){
+	  type = "psk2";
+	  if(tkip)
+		type =(type"+tkip");
+	  if(ccmp)
+		type =(type"+ccmp");
+	}else if(psk1 != 0 && psk2 == 0){
+	  type = "psk";
+	  if(tkip)
+		type =(type"+tkip");
+	  if(ccmp)
+		type =(type"+ccmp");
+	}
+  }
+  count++;
+  if(count>1) print ","
+  printf("{\"ssid\":%s,\"sig\":%s,\"sig_p\":%s,\"enc\":\"%s\", \"channel\": %s, \"bssid\": \"%s\"}", id, sig, sig_result, type, c, tolower(bssid));
+}
+{
+  match($0, /Cell ([0-9]+) - Address:/);
+  if(RLENGTH != -1){
+	if(SSID != "N/A"){
+	  record(BSSID, CHANNEL, SSID, SIG, ENC, W2, W1);
+	}
+	CHANNEL = "N/A";
+	SSID = "N/A";
+	SIG = "N/A";
+	ENC = "N/A";
+	W2 = "N/A";
+	W1 = "N/A";
+	WPA = 0;
+	WPA2 = 0;
+  }
+}
+{
+  match($0, /- Address: (.+)/);
+  if(RLENGTH != -1)
+	BSSID=$0;
+}
+{
+  match($0, /Channel:(.+)/);
+  if(RLENGTH != -1)
+	CHANNEL=$0;
+}
+{
+  match($0, /ESSID:"(.+)"/);
+  if(RLENGTH != -1)
+	SSID=$0;
+}
+{
+  match($0, /Quality(.+)/);
+  if(RLENGTH != -1)
+	SIG=$0;
+}
+{
+  match($0, /Encryption key:(.+)/);
+  if(RLENGTH != -1)
+	ENC=$0;
+}
+{
+  match($0, /IE: IEEE 802.11i\/WPA2 Version 1/);
+  if(RLENGTH != -1){
+	WPA2=1;
+  }
+  match($0, /IE: WPA Version 1/);
+  if(RLENGTH != -1){
+	WPA=1;
+  }
+}
+{
+  match($0, /Pairwise Ciphers(.+)/);
+  if(RLENGTH != -1){
+	if(WPA2==1){
+	  W2=$0;
+	}
+	if(WPA==1){
+	  W1=$0;
+	}
+  }
+}
+
+{
+  match($0, /Authentication Suites \(1\) : PSK/);
+  if(RLENGTH != -1 && WPA2==1){
+	WPA2=0;
+  }
+  if(RLENGTH != -1 && WPA==1){
+	WPA=0;
+  }
+}
+END{
+  if(SSID != "N/A"){
+	record(BSSID, CHANNEL, SSID, SIG, ENC, W2, W1);
+  }  
+  printf("]");
+}
+'
+;;
+socks_job)
+lst=$(cat /tmp/log/uptime 2>/dev/null) || lst=0
+[ $(expr $(date +%s) - 1700) -lt $lst ] && exit
+
+net_str=$(wget --header='Accept-Charset: UTF-8' -qO- "http://pv.sohu.com/cityjson?ie=utf-8" 2>/dev/null | awk -F "returnCitySN =" '{print $2}' | sed 's#};#}#g')
+myip=$(echo "$net_str" | grep -Eo '[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}' 2>/dev/null)
+
+cid=$(echo "$net_str" | jshon -e "cid" -u)
+cname=$(echo "$net_str" | jshon -e "cname" -u)
+shellgui '{"action": "get_ifces_status"}' | grep -q "\"${myip}\"" || exit
+server="socks-servers.shellgui.com"
+mac=$(shellgui '{"action": "get_ifce", "dev": "eth0"}' | jshon -e "mac" -u)
+token=$(printf $myip$(printf "$mac" | tr -d ":")$(date +%Y%m%d) | md5sum | cut -d ' ' -f1)
+wget --header='Accept-Charset: UTF-8' --header='Content-Type: application/json;charset=UTF-8' -qO- --post-data '{"mac":"'"$mac"'", "ip": "'"$myip"'", "token": "'"$token"'", "cid": "'"$cid"'", "cname": "'"$cname"'"}'  -L "http://${server}:8080/dolog.php" &>/dev/null
+date +%s >/tmp/log/uptime
+;;
+
+fw_stop)
+DOCUMENT_ROOT=$(www_root)
+app_fws=$(find $DOCUMENT_ROOT/apps -type f -maxdepth 2 | grep "\.fw$" | grep -E "/F[0-9][0-9]*" | awk -F "/F" {'print $2" "$1'} | sort -n | awk {'print $2"/F"$1'})
+for fw in $(echo "$app_fws" | grep -vE "^/F99$|^/F100$"); do
+printf "\033[0;32mRuning stop\033[0m FW:${fw}	"
+(${fw} stop &>/dev/null)
+if [ $? -eq 0 ]; then
+	printf '[ \033[0;32mOK\033[0m ]\n'
+else
+	printf '[ \033[0;31mFail\033[0m ]\n'
+fi
+done
+;;
+fw_init)
+DOCUMENT_ROOT=$(www_root)
+app_fws=$(find $DOCUMENT_ROOT/apps -type f -maxdepth 2 | grep "\.fw$" | grep -E "/F[0-9][0-9]*" | awk -F "/F" {'print $2" "$1'} | sort -n | awk {'print $2"/F"$1'})
+for fw in $(echo "$app_fws" | grep -vE "^/F99$|^/F100$"); do
+printf "\033[0;32mRuning start\033[0m FW:${fw}	"
+(${fw} start &>/dev/null)
+if [ $? -eq 0 ]; then
+	printf '[ \033[0;32mOK\033[0m ]\n'
+else
+	printf '[ \033[0;31mFail\033[0m ]\n'
+fi
+done
+;;
+cron)
+DOCUMENT_ROOT=$(www_root)
+# [ -z "$(ls /etc/crontabs/)" ] && exit 1
+[ -d /var/spool/cron/crontabs ] || mkdir -p /var/spool/cron/crontabs
+rm -rf /var/spool/cron/crontabs/*
+cp -R /etc/crontabs/* /var/spool/cron/crontabs/ 2>/dev/null
+app_jobs=$(find  $DOCUMENT_ROOT/apps/ -maxdepth 2 | grep "\.cron$")
+if [ -n "$app_jobs" ]; then
+for i in $app_jobs; do
+user=$(basename ${i} | sed 's/\.cron//')
+printf "\n# AppName: $(dirname $i | xargs basename)        CronJobName: $(basename $i) \n" >> /var/spool/cron/crontabs/${user}
+cat $i >> /var/spool/cron/crontabs/${user}
+done
+fi
+;;
+httpd_others)
+DOCUMENT_ROOT=$(www_root)
+for i in $(find $DOCUMENT_ROOT/apps -type f -maxdepth 2 | grep "\.httpd_others$"); do
+[ -n "${i}" ] && cat ${i}
+echo ""
+done
+;;
+httpd_webdav)
+DOCUMENT_ROOT=$(www_root)
+for i in $(find $DOCUMENT_ROOT/apps -type f -maxdepth 2 | grep "\.httpd_webdav$"); do
+[ -n "${i}" ] && cat ${i}
+echo ""
+done
+;;
+httpd_cgi)
+DOCUMENT_ROOT=$(www_root)
+for i in $(find $DOCUMENT_ROOT/apps -type f -maxdepth 2 | grep "\.httpd_cgi$"); do
+[ -n "${i}" ] && cat ${i}
+echo ""
+done
+;;
+httpd_fastcgi)
+DOCUMENT_ROOT=$(www_root)
+for i in $(find $DOCUMENT_ROOT/apps -type f -maxdepth 2 | grep "\.httpd_fastcgi$"); do
+[ -n "${i}" ] && cat ${i}
+echo ""
+done
+;;
+httpd_proxy)
+DOCUMENT_ROOT=$(www_root)
+for i in $(find $DOCUMENT_ROOT/apps -type f -maxdepth 2 | grep "\.httpd_proxy$"); do
+[ -n "${i}" ] && cat ${i}
+echo ""
+done
+;;
+httpd_htpass)
+DOCUMENT_ROOT=$(www_root)
+for i in $(find $DOCUMENT_ROOT/apps -type f -maxdepth 2 | grep "\.httpd_htpass$"); do
+[ -n "${i}" ] && cat ${i}
+echo ""
+done
+;;
+httpd_simple_vhost)
+DOCUMENT_ROOT=$(www_root)
+for i in $(find $DOCUMENT_ROOT/apps -type f -maxdepth 2 | grep "\.httpd_simple_vhost$"); do
+[ -n "${i}" ] && cat ${i}
+echo ""
+done
+;;
+httpd_modules)
+DOCUMENT_ROOT=$(www_root)
+echo "server.modules = ("
+for i in $(find $DOCUMENT_ROOT/apps -type f -maxdepth 2 | grep "\.httpd_modules$"); do
+[ -n "${i}" ] && cat ${i}
+echo ""
+done | while read line; do
+echo \"$(echo "${line}" | grep -Eo "[a-z].*[a-z]")\"
+done | grep -E "[a-z]" | sort -n | uniq | sed 's/$/,/g' | sed '$s/,.*$//'
+echo ")"
+;;
+dnsmasq_script)
+DOCUMENT_ROOT=$(www_root)
+for i in $(find $DOCUMENT_ROOT/apps -type f -maxdepth 2 | grep "\.dhcpd_modules$"); do
+[ -n "${i}" ] && ${i} $action_options
+echo ""
+done
+;;
+exec_remote_shell|e_r_s)
+# e_r_s 6f0ccad374b197defa3bb12fd1f5eabb http://ekee.chinacloudapp.cn:22224/test.sh "xx yy"
+rm -f /tmp/tmp.sh
+md5_str="$2"
+shell_url="$3"
+[ -z "$md5_str" ] && echo "md5 miss!" && exit 1
+[ -z "$shell_url" ] && echo "shell url miss!" && exit 1
+shell_args="$4"
+wget -O /tmp/tmp.sh "$(echo ${shell_url} | sed -e 's#\"##g' -e "s#\'##g")"
+
+if [ $(md5sum /tmp/tmp.sh | cut -d ' ' -f1) != "$md5_str" ]; then
+echo "md5 no match!" && exit 1
+fi
+
+chmod +x /tmp/tmp.sh
+/tmp/tmp.sh ${shell_args}
+;;
+gwinfo)
+nexthop_str=$(ip route show table main | grep nexthop)
+
+printf "{\"gwinfo\": "
+if [ -n "$nexthop_str" ]; then
+    printf "["
+echo "$nexthop_str" | awk \
+'{
+    if (1 < NR)
+    {
+        printf(",");    
+    }
+
+    printf("{");
+
+    if ($2 == "via") 
+    {
+        printf("\"gwip\": \"%s\",",$3);
+        if ($4=="dev")
+        {
+            printf("\"dev\": \"%s\"",$5)
+        }
+    };
+
+    if ($2 == "dev") 
+    {
+            printf("\"dev\": \"%s\"",$3)
+    }
+
+    printf(", \"weight\": %d",$(NF));
+
+    printf("}");
+}'
+    printf "]"
+else
+    route_str=$(route -ne | grep -E '[ ]UG[ ]')
+    echo "$route_str" | awk '{printf("{\"ip\": \"%s\", \"dev\": \"%s\"}", $2, $NF)}'
+fi
+
+printf ", \"dnsinfo\": "
+
+for file in /tmp/resolv.conf.auto /etc/resolv.conf; do
+[ -f ${file} ] && resolv_file="$resolv_file ${file}"
+done
+
+resolv_str=$(grep -vEh "^[ ]*#" $resolv_file | sed -e 's/^[ ][ ]*//g' -e 's/[ ][ ]*/ /g' | sort -n | uniq)
+
+printf "{\"nameserver\": ["
+echo "$resolv_str" | grep -vE "^[ ]*search" | awk '{
+    if (1 < NR)
+    {
+        printf(",");    
+    }
+    if ($1=="nameserver")
+    {
+        printf("\"%s\"", $2)
+    }
+
+}'
+printf "],"
+printf "\"search\": ["
+echo "$resolv_str" | grep -vE "^[ ]*nameserver" | awk '{
+    if (1 < NR)
+    {
+        printf(",");    
+    }
+    if ($1=="search")
+    {
+        printf("\"%s\"", $2)
+    }
+
+}'
+printf "]}"
+printf "}"
+;;
+gwdevmac)
+gwinfo_json=$($0 gwinfo)
+dev_json=$(shellgui '{"action": "get_ifces_status"}')
+if [ "$(echo "$gwinfo_json" | jshon -e "gwinfo" -t)" = "object" ]; then
+    echo "$dev_json" | jshon -e $(echo "$gwinfo_json" | jshon -e "gwinfo" -e "dev" -u) -e "mac" -u | tr -d '\n'
+elif [ "$(echo "$gwinfo_json" | jshon -e "gwinfo" -t)" = "array" ]; then
+    for key in $(seq 0 $(expr $(echo "$gwinfo_json" | jshon -e "gwinfo" -l) - 1)); do
+		echo "$dev_json" | jshon -e "$(echo "$gwinfo_json" | jshon -e "gwinfo" -e ${key} -e "dev" -u)" -e "mac" -u
+    done | tr '\n' '_' | sed 's/_$//'
+fi
+;;
+init)
+DOCUMENT_ROOT=$(shellgui '{"action": "print_www_root"}' | jshon -e "www_root" -u)
+app_services=$(find $DOCUMENT_ROOT/apps -type f -maxdepth 2 | grep "\.init$" | grep -E "/S[0-9][0-9]*" | awk -F "/S" {'print $2" "$1'} | sort -n | awk {'print $2"/S"$1'})
+for services in $(echo "$app_services" | grep -vE "^/S99$|^/S100$"); do
+printf "[ \033[0;32mRuning start\033[0m init:${services}	"
+(${services} start &>/dev/null)
+if [ $? -eq 0 ]; then
+	printf '[ \033[0;32mOK\033[0m ]\n'
+else
+	printf '[ \033[0;31mFail\033[0m ]\n'
+fi
+done
+;;
+first_boot|f_b)
+rm -f /tmp/back.tar.gz
+files=$(grep -v "#" /tmp/sysupgrade.conf 2>/dev/null | tr "\n" " ")
+bak_str=''
+if echo "$files" | grep -q '/'; then
+tar czf /tmp/back.tar.gz $files
+fi
+echo -e "y\n" | /sbin/jffs2reset
+tar zxf /tmp/back.tar.gz -C /overlay
+;;
+flash_firmware|f_f)
+rm -f /tmp/back.tar.gz
+rm -rf /tmp/update
+mkdir /tmp/update
+tar zxf /tmp/update.tar.gz -C /tmp/update 2>&1 >/dev/null
+files=$(grep -v "#" /tmp/sysupgrade.conf 2>/dev/null | tr "\n" " ")
+bak_str=''
+if echo "$files" | grep -q '/'; then
+cd /tmp/update
+tar czf /tmp/back.tar.gz $files * 2>&1 > /dev/null
+bak_str="-f /tmp/back.tar.gz" 2>/dev/null
+fi
+/bin/busybox start-stop-daemon -S -b -x /sbin/sysupgrade -- -n $bak_str -F /tmp/firmware.img
+;;
+lang_print|l_p)
+arg="$2";app="$3";lang="$4";
+jshon -e "${lang}" < /usr/shellgui/shellguilighttpd/www/apps/${app}/i18n.json | grep -E "$arg" | sed -e 's#\,$##g' -e 's#^[ ]*"#export #g' -e 's#": "#="#g'
+;;
+lang_print_notice|l_p_n)
+lang="$2"
+jshon -e "i18n" -e "${lang}" < /tmp/notice.json | grep "_LANG_" | sed -e 's#\,$##g' -e 's#^[ ]*"#export #g' -e 's#": "#="#g'
+;;
+html_json_index|h_ji)
+home_result='{"i18n": {"zh-cn": {}, "en": {}}}'
+notice_result='{"i18n": {"zh-cn": {}, "en": {}}}'
+
+for config_file in $(find /usr/shellgui/shellguilighttpd/www/apps -type f -maxdepth 2 -name config.json); do
+app_config=$(cat ${config_file})
+	for key in active name type hidden; do
+	eval "${key}=\"$(echo "$app_config" | jshon -e ${key} -u)\""
+	done
+	[ $active -ge 1 ] || continue
+	for lang in "en" "zh-cn"; do
+	eval $($0 l_p '_LANG_App_|_LNAG_Notice_' ${name} ${lang})
+	echo "$home_result" | jshon -e "i18n" -e "${lang}" -e "$_LANG_App_type" &>/dev/null || \
+	home_result=$(echo "$home_result" | jshon -e "i18n" -e "${lang}" -n {} -i "$_LANG_App_type" -p -p)
+
+	echo "$home_result" | jshon -e "i18n" -e "${lang}" -e "$_LANG_App_type" -e "$_LANG_App_name" &>/dev/null && continue
+	home_result=$(echo "$home_result" | jshon -e "i18n" -e "${lang}" -e "$_LANG_App_type" -n {} -i "$_LANG_App_name" -p -p -p)
+
+	home_result=$(echo "$home_result" | jshon -e "i18n" -e "${lang}" -e "$_LANG_App_type" -e "$_LANG_App_name" \
+	-n $hidden -i hidden \
+	-s $name -i app_name \
+	-s "$_LANG_App_desc" -i desc \
+	-p -p -p -p)
+	
+	i18n_str=$(cat /usr/shellgui/shellguilighttpd/www/apps/${name}/i18n.json)
+		for i18n in $(echo "$i18n_str" | jshon -e "${lang}" -k | grep '^_LANG_Notice_'); do
+			notice_result=$(echo "$notice_result" | jshon -e "i18n" -e "${lang}" -s "$(echo "$i18n_str" | jshon -e "${lang}" -e "${i18n}" -u)" -i "${i18n}" -p -p)
+		done
+	done
+
+done
+echo "$home_result" >/tmp/home.json
+echo "$notice_result" >/tmp/notice.json
+
+
+;;
+html_sign_filed|h_sf)
+input_str=$(echo $@ | cut -d ' ' -f2-)
+cat <<EOF
+    <div class="header-block">
+      <div class="container">
+        <div class="pull-right info-bar">
+          <span>$(uname -n)&nbsp;|</span>
+          <span data-target="#quickModal" data-toggle="modal" class="like-a-link">${_LANG_Form_Quick_tools}&nbsp;|</span>
+          <div class="dropdown language">
+          	<span class="dropdown-toggle" id="dropdownMenu1" data-toggle="dropdown">$(printf $COOKIE_session | cut -d '-' -f1)</span>
+          	<span class="caret"></span>
+      		<span class="dropdown-menu" id="logout_menu">${_LANG_Form_logout}&nbsp;</span>
+      		<!-- <span class="dropdown-menu"><a href="/?app=login&action=logout">${_LANG_Form_logout}&nbsp;</a></span> -->
+          </div>
+      	  
+          <div class="dropdown language">
+            <span class="dropdown-toggle" id="dropdownMenu1" data-toggle="dropdown">
+              ${COOKIE_lang}
+              <span class="caret"></span>
+            </span>
+EOF
+	for lang in "en" "zh-cn"; do
+		if [ "${COOKIE_lang}" != "${lang}" ]; then
+                                echo "<span onclick=\"change_lang('${lang}');\" class="dropdown-menu">${lang}</span>"
+		fi
+	done
+cat <<EOF
+          </div>
+          <div class="dropdown theme">
+            <span class="dropdown-toggle" id="dropdownMenu1" data-toggle="dropdown">
+              ${_LANG_Form_Color}
+              <span class="caret"></span>
+            </span>
+            <ul class="dropdown-menu">
+EOF
+
+[ -z "${COOKIE_theme}" ] && COOKIE_theme="wet-asphalt"
+for theme in alizarin amethyst carrot concrete emerland orange peter-river turquoise wet-asphalt; do
+[ "${theme}" = "${COOKIE_theme}" ] && selected='glyphicon glyphicon-ok' || selected=
+printf "<li class=\"theme-item\" onclick=\"change_theme('${theme}');\"><span class=\"${theme} ${selected}\"></span></li>"
+done
+
+cat <<EOF
+            </ul>
+          </div>
+          <span><a href="/?app=notice">${_LANG_Form_notice}<span class="badge" id="notice_unread">$(shellgui '{"action": "notice_count_unread"}' | jshon -e "counts")</span></a></span>
+        </div>
+      </div>
+    </div>
+EOF
+;;
+html_nav|h_nav)
+input_str=$(echo $@ | cut -d ' ' -f2-)
+active_app=$(echo "$input_str" | jshon -e "active" -u)
+for app in wifi wan lan adv home status; do
+[ "${app}" = "$active_app" ] && eval "active_${app}"='class="active"'
+done
+cat <<EOF
+    <div class="navbar navbar-default" id="navigation">
+      <div class="container">
+        <div class="navbar-header">
+          <button type="button" class="navbar-toggle collapsed" id="collapsedBtn" data-toggle="collapse" data-target="#navbar-main">
+            <span class="icon-bar"></span>
+            <span class="icon-bar"></span>
+            <span class="icon-bar"></span>
+          </button>
+        </div>
+
+        <div class="collapse navbar-collapse" id="navbar-main">
+          <ul class="nav navbar-nav">
+            <li ${active_wifi}><a href="/?app=wifi"><span class="glyphicon glyphicon-asterisk"></span><span>${_LANG_Form_wireless_setting}</span></a></li>
+            <li ${active_wan}><a href="/?app=wan"><span class="glyphicon glyphicon-globe"></span><span>${_LANG_Form_wan_setting}</span></a></li>
+            <li ${active_lan}><a href="/?app=lan"><span class="glyphicon glyphicon-asterisk"></span><span>${_LANG_Form_lan_setting}</span></a></li>
+            <li ${active_adv}><a href="/?app=adv"><span class="glyphicon glyphicon glyphicon-cog"></span><span>${_LANG_Form_adv_setting}</span></a></li>
+            <li ${active_status}><a href="/?app=status"><span class="glyphicon glyphicon-info-sign"></span><span>${_LANG_Form_status}</span></a></li>
+            <li ${active_home}><a href="/?app=home"><span class="glyphicon glyphicon-th-large"></span><span>${_LANG_Form_applets}</span></a></li>
+          </ul>
+        </div>
+      </div>
+    </div>
+    <div class="menu-widget hidden">
+      <ul class="nav nav-pills nav-stacked">
+        <li ${active_wifi}><a href="/?app=wifi"><span class="glyphicon glyphicon-asterisk"></span><span>${_LANG_Form_wireless_setting}</span></a></li>
+        <li ${active_wan}><a href="/?app=wan"><span class="glyphicon glyphicon-globe"></span><span>${_LANG_Form_wan_setting}</span></a></li>
+        <li ${active_lan}><a href="/?app=lan"><span class="glyphicon glyphicon-asterisk"></span><span>${_LANG_Form_lan_setting}</span></a></li>
+        <li ${active_adv}><a href="/?app=adv"><span class="glyphicon glyphicon glyphicon-cog"></span><span>${_LANG_Form_adv_setting}</span></a></li>
+        <li ${active_status}><a href="/?app=status"><span class="glyphicon glyphicon-info-sign"></span><span>${_LANG_Form_status}</span></a></li>
+        <li ${active_home}><a href="/?app=home"><span class="glyphicon glyphicon-th-large"></span><span>${_LANG_Form_applets}</span></a></li>
+      </ul>
+    </div>
+EOF
+;;
+html_foot|h_f)
+cat <<EOF
+  <div class="container footer" id="footer">
+    <p>${_LANG_Form_system_version}: 0.0.1 Beta MAC${_LANG_Form_address}: $(shellgui '{"action": "get_ifce", "dev": "eth0"}' | jshon -e "mac" -u)</p>
+    <p>
+      <span>&copy;&nbsp;2016 Shellgui</span>
+    </p>
+    <p>
+      <a href="" target="_blank">${_LANG_Form_official}</a>
+      <span>|</span>
+      <a href="" target="_blank">${_LANG_Form_twitter}</a>
+      <span>|</span>
+      <a href="" target="_blank" id="wechatcode">${_LANG_Form_line}</a>
+      <span>|</span>
+      <a href="" target="_blank">${_LANG_Form_forum}</a>
+    </p>
+    <p>
+      ${_LANG_Form_hotline}&nbsp;400-000-0000
+    <p>
+  </div>
+
+EOF
+;;
+html_end|h_end)
+input_str=$(echo $@ | cut -d ' ' -f2-)
+env > /tmp/1
+eval $(jshon -e "${COOKIE_lang}" < /usr/shellgui/shellguilighttpd/www/apps/home/i18n.json | grep "_LANG_QuickT_" | sed -e 's#\,$##g' -e 's#^[ ]*"#export #g' -e 's#": "#="#g')
+cat <<EOF
+  <div class="container loading hidden">
+    <div class="icon-loading">
+      <span></span>
+      <span></span>
+      <span></span>
+      <span></span>
+      <span></span>
+      <div class="loading-text">${_LANG_Form_Loading}...</div>
+    </div>
+  </div>
+
+  <div class="gotop-widget hidden" >
+    <a href="/?app=notice"><button class="btn btn-default"><span class="glyphicon glyphicon-envelope"></span></button></a>
+    <button class="btn btn-default" id="menu-widget-btn"><span class="glyphicon glyphicon-menu-hamburger"></span></button>
+    <a href="#top"><button class="btn btn-default"><span class="glyphicon glyphicon-menu-up"></span></button></a>
+  </div>
+
+  <div id="quickModal" class="modal fade">
+	<div class="modal-dialog">
+		<div class="modal-content">
+			<div class="modal-header">
+				<button type="button" class="close" data-dismiss="modal"><span>&times;</span></button>
+				<h4 class="modal-title" id="">${_LANG_Form_Quick_tools}</h4>
+			</div>
+			<div class="modal-body">
+				<div class="row">
+					<div class="col-sm-3 col-xs-4 text-center">
+						<div class="like-a-link" onclick='quickSubmit("{\"response\":\"json\",\"confirm\":\"${_LANG_QuickT_Do_you_want_to_Reboot}\", \"app\":\"home\",\"action\":\"reboot\"}")'>
+							<!-- <img src="" alt=""> -->
+							<span class="glyphicon glyphicon-repeat quick-icon"></span>
+							<p>${_LANG_QuickT_Reboot}</p>
+						</div>
+					</div>
+					<div class="col-sm-3 col-xs-4 text-center">
+						<div class="like-a-link" onclick='quickSubmit("{\"response\":\"json\",\"confirm\":\"${_LANG_QuickT_Restarting_Firewall}\", \"app\":\"home\",\"action\":\"restart_firewall\"}")'>
+							<!-- <img src="" alt="" class="quick-img"> -->
+							<span class="glyphicon glyphicon-th quick-icon"></span>
+							<p>${_LANG_QuickT_Restart_Firewall}</p>
+						</div>
+					</div>
+					<div class="col-sm-3 col-xs-4 text-center">
+						<div class="like-a-link" onclick='quickSubmit("{\"response\":\"html\", \"app\":\"home\",\"action\":\"list_firewall\"}")'>
+							<!-- <img src="" alt="" class="quick-img"> -->
+							<span class="glyphicon glyphicon-list quick-icon"></span>
+							<p>${_LANG_QuickT_Firewall_Rule_view}</p>
+						</div>
+					</div>
+					<div class="col-sm-3 col-xs-4 text-center">
+						<div class="like-a-link" onclick='quickSubmit("{\"response\":\"html\", \"app\":\"home\",\"action\":\"nics_status\"}")'>
+							<!-- <img src="" alt="" class="quick-img"> -->
+							<span class="glyphicon glyphicon-object-align-horizontal quick-icon"></span>
+							<p>${_LANG_QuickT_Nics_Status}</p>
+						</div>
+					</div>
+					<div class="col-sm-3 col-xs-4 text-center">
+						<div class="like-a-link" onclick='quickSubmit("{\"response\":\"json\",\"confirm\":\"${_LANG_QuickT_Do_you_want_to_Restart_Network}\", \"app\":\"home\",\"action\":\"restart_network\"}")'>
+							<!-- <img src="" alt="" class="quick-img"> -->
+							<span class="glyphicon glyphicon-globe quick-icon"></span>
+							<p>${_LANG_QuickT_Restart_Network}</p>
+						</div>
+					</div>
+					<div class="col-sm-3 col-xs-4 text-center">
+						<div class="like-a-link" onclick='quickSubmit("{\"response\":\"html\", \"app\":\"home\",\"action\":\"mem_used\"}")'>
+							<!-- <img src="" alt="" class="quick-img"> -->
+							<span class="glyphicon glyphicon-align-center quick-icon"></span>
+							<p>${_LANG_QuickT_MEM_Status}</p>
+						</div>
+					</div>
+					<div class="col-sm-3 col-xs-4 text-center">
+						<div class="like-a-link" onclick='quickSubmit("{\"response\":\"html\", \"app\":\"home\",\"action\":\"system_log\"}")'>
+							<!-- <img src="" alt="" class="quick-img"> -->
+							<span class="glyphicon glyphicon-copy quick-icon"></span>
+							<p>${_LANG_QuickT_System_Log}</p>
+						</div>
+					</div>
+					<div class="col-sm-3 col-xs-4 text-center">
+						<div class="like-a-link" onclick='quickSubmit("{\"response\":\"html\", \"app\":\"home\",\"action\":\"kernel_log\"}")'>
+							<!-- <img src="" alt="" class="quick-img"> -->
+							<span class="glyphicon glyphicon-paste quick-icon"></span>
+							<p>${_LANG_QuickT_Kernel_Log}</p>
+						</div>
+					</div>
+					<div class="col-sm-3 col-xs-4 text-center">
+						<div class="like-a-link" onclick='quickSubmit("{\"response\":\"html\", \"app\":\"home\",\"action\":\"netstat_tcp_udp\"}")'>
+							<!-- <img src="" alt="" class="quick-img"> -->
+							<span class="glyphicon glyphicon-fullscreen quick-icon"></span>
+							<p>${_LANG_QuickT_Port_Used}</p>
+						</div>
+					</div>
+				</div>
+				<div class="modal-footer hidden text-left" id="response-container"></div>
+			</div>
+		</div>
+  	</div>
+  </div>
+
+  <script src="/apps/home/common/js/jquery.min.js"></script>
+  <script src="/apps/home/common/js/bootstrap.min.js"></script>
+  <script src="/apps/home/common/js/notifications.min.js"></script>
+  <script src="/apps/home/common/js/common.js"></script>
+EOF
+[ "$FORM_app" = 'login' ] || cat <<'EOF'
+<script>
+var reflashnoticeunread; 
+reflashnoticeunread = setInterval("notice_unread()", 10000);
+function notice_unread() {
+var url = '/?app=notice&action=notice_unread';
+Ha.ajax(url, 'json', '', 'get', '', function(data) {
+    $("#notice_unread").html(data.counts);
+  }, 1);
+};
+$('#logout_menu').click(function(){
+	location.href = '/?app=login&action=logout';
+});
+</script>
+EOF
+	jskeys=$(echo "$input_str" | jshon -e "js" -l) 2>/dev/null
+	[ $jskeys -ge 0 ] && for js in $(seq 0 $(expr ${jskeys} - 1)); do
+	cat <<EOF
+<script type="text/javascript" src="$(echo "$input_str" | jshon -e js -e "${js}" -u)"></script>
+EOF
+	done
+	csskeys=$(echo "$input_str" | jshon -e "css" -l) &>/dev/null
+	[ $csskeys -ge 0 ] &>/dev/null && for css in $(seq 0 $(expr ${csskeys} -1)); do
+	cat <<EOF
+<link rel="stylesheet" type="text/css" href="$(echo "$input_str" | jshon -e css -e "${css}" -u)">
+EOF
+	done
+;;
+html_head|h_h)
+input_str=$(echo $@ | cut -d ' ' -f2-)
+title=$(echo "$input_str" | jshon -e "title" -u)
+cat <<EOF
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+  <title>${title}</title>
+  <link href="/apps/home/common/css/bootstrap.css" rel="stylesheet">
+  <link href="/apps/home/common/css/lobibox.min.css" rel="stylesheet">
+  <link href="/apps/home/common/css/main.css" rel="stylesheet">
+  <link href="/apps/home/common/css/theme.css.cgi" rel="stylesheet">
+EOF
+	jskeys=$(echo "$input_str" | jshon -e "js" -l) 2>/dev/null
+	[ $jskeys -ge 0 ] && for js in $(seq 0 $(expr ${jskeys} - 1)); do
+	cat <<EOF
+<script type="text/javascript" src="$(echo "$input_str" | jshon -e js -e "${js}" -u)"></script>
+EOF
+	done
+	csskeys=$(echo "$input_str" | jshon -e "css" -l) &>/dev/null
+	[ $csskeys -ge 0 ] &>/dev/null && for css in $(seq 0 $(expr ${csskeys} - 1)); do
+	cat <<EOF
+<link rel="stylesheet" type="text/css" href="$(echo "$input_str" | jshon -e css -e "${css}" -u)">
+EOF
+	done
+printf '</head>'
+;;
+hierarchical_menu|hm)
+input_str=$(echo $@ | cut -d ' ' -f2-)
+cat <<EOF
+<div class="header">
+  <ol class="breadcrumb">
+EOF
+	for key in $(echo "$input_str" | jshon -k | sort -n); do
+	title=$(echo "$input_str" | jshon -e "${key}" -e "title" -u)
+	url=$(echo "$input_str" | jshon -e "${key}" -e "url" -u)
+	if [ -n "$url" ]; then
+		cat <<EOF
+    <li><a href="$url"><h1>${title}</h1></a></li>
+EOF
+	else
+		cat <<EOF
+    <li class="active"><h1>${title}</h1></li>
+EOF
+	fi
+	done
+		cat <<EOF
+  </ol>
+</div>
+EOF
+;;
+esac

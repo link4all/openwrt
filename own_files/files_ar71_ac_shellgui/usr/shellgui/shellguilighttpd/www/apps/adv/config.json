@@ -1,0 +1,9 @@
+{
+	"name": "adv",
+	"type": "Network",
+	"active": 1,
+	"hidden": 1,
+	"version": "0.1",
+	"uninstall": 1,
+	"keep_files": []
+}

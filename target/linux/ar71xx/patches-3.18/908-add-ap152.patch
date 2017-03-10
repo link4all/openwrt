@@ -1,0 +1,44 @@
+--- a/arch/mips/ath79/Kconfig
++++ b/arch/mips/ath79/Kconfig
+@@ -133,6 +133,20 @@
+ 	  Say 'Y' here if you want your kernel to support the
+ 	  Atheros AP136 or AP135 reference boards.
+ 
++config ATH79_MACH_AP152
++	bool "Atheros AP152 reference board"
++	select SOC_QCA956X
++	select ATH79_DEV_GPIO_BUTTONS
++	select ATH79_DEV_LEDS_GPIO
++	select ATH79_DEV_M25P80
++	select ATH79_DEV_USB
++	select ATH79_DEV_WMAC
++	select ATH79_DEV_AP9X_PCI if PCI
++	help
++	  Say 'Y' here if you want your kernel to support the
++	  QCA AP152 reference boards.
++
++
+ config ATH79_MACH_AP81
+ 	bool "Atheros AP81 reference board"
+ 	select SOC_AR913X
+--- a/arch/mips/ath79/Makefile
++++ b/arch/mips/ath79/Makefile
+@@ -49,6 +49,7 @@
+ obj-$(CONFIG_ATH79_MACH_AP121)		+= mach-ap121.o
+ obj-$(CONFIG_ATH79_MACH_AP132)		+= mach-ap132.o
+ obj-$(CONFIG_ATH79_MACH_AP136)		+= mach-ap136.o
++obj-$(CONFIG_ATH79_MACH_AP152)		+= mach-ap152.o
+ obj-$(CONFIG_ATH79_MACH_AP81)		+= mach-ap81.o
+ obj-$(CONFIG_ATH79_MACH_AP83)		+= mach-ap83.o
+ obj-$(CONFIG_ATH79_MACH_AP96)		+= mach-ap96.o
+--- a/arch/mips/ath79/machtypes.h
++++ b/arch/mips/ath79/machtypes.h
+@@ -31,6 +31,7 @@
+ 	ATH79_MACH_AP135_020,		/* Atheros AP135-020 reference board */
+ 	ATH79_MACH_AP136_010,		/* Atheros AP136-010 reference board */
+ 	ATH79_MACH_AP136_020,		/* Atheros AP136-020 reference board */
++	ATH79_MACH_AP152,		/* Atheros AP152 reference board */
+ 	ATH79_MACH_AP81,		/* Atheros AP81 reference board */
+ 	ATH79_MACH_AP83,		/* Atheros AP83 */
+ 	ATH79_MACH_AP96,		/* Atheros AP96 */
+
